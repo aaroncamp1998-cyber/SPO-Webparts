@@ -1,6 +1,6 @@
 import pandas as pd
-from pywinauto.application import Application
-from pywinauto.keyboard import send_keys
+from pywinauto import Desktop
+import subprocess
 import time
 import logging
 import os
@@ -11,8 +11,9 @@ from datetime import datetime
 # ==========================================
 
 EXCEL_FILE_PATH = r"C:\path\to\your\employee_data.xlsx"
-APP_PATH = r"C:\Path\To\EntreClient.exe" # Put the exact path to the application here
-PASSWORD = "YourSecurePassword123!"
+APP_PATH = r"C:\Program Files\DMP\Entre\Entre-Client.exe" # Your exact path from earlier
+PASSWORD = "YourSecurePassword123!" 
+USERNAME = "PA_TEST_SVC01" 
 
 # Setup Logging
 log_dir = r"c:\logs"
@@ -27,79 +28,114 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-# ==========================================
-# 2. GUI Automation with pywinauto
-# ==========================================
-# NOTE: The window titles (e.g., 'LoginWindow') and control identifiers 
-# (e.g., 'PasswordEdit') are PLACEHOLDERS. You must replace these with 
-# your app's actual identifiers.
+# Initialize the Desktop connection
+desktop = Desktop(backend="win32")
 
-def login_to_entre(app, password):
-    """Handles the initial login and server setup."""
-    print("Logging into Entre Client...")
-    login_dialog = app.window(title_re=".*Login.*") # Adjust title as needed
+# ==========================================
+# 2. GUI Automation Functions
+# ==========================================
+
+def open_entre():
+    """Launches the Entré application and waits for the login screen."""
+    print("Launching Entré...")
+    try:
+        subprocess.Popen(APP_PATH)
+        # Give the app plenty of time to launch the splash screen and load the login window
+        time.sleep(12) 
+    except Exception as e:
+        print(f"Failed to launch application: {e}")
+        logging.error(f"Failed to launch application: {e}")
+        exit()
+
+def login_to_entre(password, username):
+    """Hooks into the open login screen and logs in."""
+    print("Connecting to Entré Login Screen...")
     
-    # Input password
-    login_dialog.PasswordEdit.type_keys(password) # Replace 'PasswordEdit'
+    # Grab the login window
+    login_window = desktop.window(title_re=".*Log In.*")
     
-    # Change server name
-    login_dialog.ServerEdit.set_edit_text('vsentre01') # Replace 'ServerEdit'
+    # Fill in the fields 
+    # TODO: Verify 'Edit1', 'Edit2', etc., with your actual map names if needed
+    login_window.Edit1.set_edit_text('vsentre01') # Server Name
+    login_window.Edit2.set_edit_text(username)    # Username
+    login_window.Edit3.set_edit_text(password)    # Password
     
-    # Check Administrators box
-    if not login_dialog.AdminCheckBox.get_toggle_state():
-        login_dialog.AdminCheckBox.click()
+    # Check Administrator box 
+    # TODO: Update 'CheckBox1' to the real name
+    if not login_window.CheckBox1.get_toggle_state():
+        login_window.CheckBox1.click()
         
-    # Click OK/Login
-    login_dialog.OKButton.click()
-    time.sleep(3) # Wait for login to process and main window to load
+    # Click Log In 
+    # TODO: Update 'Button1' to the real name
+    login_window.Button1.click()
+    
+    print("Waiting 8 seconds for main application to load...")
+    time.sleep(8) 
 
-def navigate_to_personnel(app):
+def navigate_to_personnel():
     """Navigates the top menus to get to the personnel search."""
-    main_window = app.window(title_re=".*Entre Client.*") # Main window title
+    # Grab the main window once it loads
+    main_window = desktop.window(title_re=".*Entre Client.*") # TODO: Verify exact main window title
     
     # Select Management -> Personnel from the top menu bar
-    # pywinauto makes menu navigation very easy:
     main_window.menu_select("Management->Personnel")
-    time.sleep(1)
+    time.sleep(2) 
 
-def process_employee(app, employee_name):
-    """Searches for an employee, reads their status, and updates if active."""
-    personnel_window = app.window(title="Personnel") # Adjust title
+def process_employee(employee_name):
+    """Searches for an employee, reads ListView1997, and updates if active."""
+    personnel_window = desktop.window(title_re=".*Personnel.*") # TODO: Verify exact Personnel window title
     
     # Put employee name into search bar and search
-    personnel_window.SearchEdit.set_edit_text(employee_name)
-    personnel_window.SearchButton.click()
-    time.sleep(2) # Wait for results
+    # TODO: Update 'Edit1' and 'Button1' with the Search bar and Search button identifiers
+    personnel_window.Edit1.set_edit_text(employee_name)
+    personnel_window.Button1.click()
+    time.sleep(2) # Wait for the ListView to populate
     
-    # Read the status directly from the UI!
-    # This assumes the status shows up in a list, grid, or text box
     try:
-        current_status = personnel_window.StatusField.window_text() # Replace 'StatusField'
-    except Exception:
-        return "not_found"
+        # Read the text directly from the container we found
+        all_results = personnel_window.ListView1997.texts()
+        results_string = str(all_results)
+    except Exception as e:
+        print(f"Error reading list for {employee_name}: {e}")
+        return "unknown_error"
 
-    if "Terminated" in current_status:
+    # Evaluate the status based on the text found in the ListView
+    if "Terminated" in results_string:
         return "previously_terminated"
     
-    elif "Active" in current_status:
-        # Open the user profile (e.g., double-clicking the result)
-        personnel_window.SearchResultList.click_input(double=True)
-        time.sleep(1)
+    elif "Active" in results_string:
+        # Open the profile by double-clicking the ListView
+        personnel_window.ListView1997.click_input(double=True)
+        time.sleep(2) # Wait for User Profile window to open
         
-        profile_window = app.window(title="User Profile")
+        # Grab the newly opened profile window
+        profile_window = desktop.window(title_re=".*User Profile.*") # TODO: Verify exact Profile window title
         
         # Change status from active to terminated
-        profile_window.StatusComboBox.select("Terminated")
+        # TODO: Update these identifiers based on the Profile Window's map
+        profile_window.ComboBox1.select("Terminated") 
         
-        # Save and Exit
-        profile_window.OKButton.click()
-        profile_window.SaveButton.click()
-        profile_window.ExitButton.click()
-        time.sleep(1)
+        profile_window.OKButton.click()   
+        profile_window.SaveButton.click() 
+        profile_window.ExitButton.click() 
+        time.sleep(1) 
         
         return "terminated_today"
+        
     else:
-        return "unknown_error"
+        return "not_found"
+
+def close_entre():
+    """Gracefully closes the application, with a forced kill fallback."""
+    print("Closing Entré...")
+    try:
+        main_window = desktop.window(title_re=".*Entre Client.*") # TODO: Verify exact main window title
+        main_window.close()
+        time.sleep(3)
+    except Exception as e:
+        print(f"Could not close gracefully, forcing shutdown... ({e})")
+        # Fallback: force kill the process through Windows Command Line
+        os.system("taskkill /F /IM Entre-Client.exe /T")
 
 # ==========================================
 # 3. Main Execution Logic
@@ -107,34 +143,34 @@ def process_employee(app, employee_name):
 
 def main():
     try:
-        # Read Excel data
+        # 1. Read Excel data
+        print("Reading Excel file...")
         df = pd.read_excel(EXCEL_FILE_PATH)
         df['Termination Date'] = pd.to_datetime(df['Termination Date'])
         today = datetime.today()
         
-        # Start the Application (uses "uia" backend for modern Windows apps)
-        print("Starting Entre Client...")
-        app = Application(backend="uia").start(APP_PATH)
-        time.sleep(2) # Give it a moment to open
+        # 2. Start GUI Automation (Open & Login)
+        open_entre()
+        login_to_entre(PASSWORD, USERNAME)
+        navigate_to_personnel()
         
-        # Execute workflow
-        login_to_entre(app, PASSWORD)
-        navigate_to_personnel(app)
-        
+        # 3. Process the loop
         for index, row in df.iterrows():
             emp_name = row['Employee Name']
             term_date = row['Termination Date']
             
-            # Date validation
+            # Check if date is in the future or empty
             if pd.isna(term_date) or term_date > today:
-                logging.info(f"SKIPPED: {emp_name} - Not at termination date yet.")
+                logging.info(f"SKIPPED: {emp_name} - Not at termination date yet (Date: {term_date.date() if not pd.isna(term_date) else 'None'}).")
                 continue
             
-            # Process and Log
-            status = process_employee(app, emp_name)
+            # Process employee if date is today or in the past
+            print(f"Processing: {emp_name}...")
+            status = process_employee(emp_name)
             
+            # Log based on the reported status
             if status == "not_found":
-                logging.info(f"NOT FOUND: {emp_name} - Skipped because they do not exist.")
+                logging.info(f"NOT FOUND: {emp_name} - Skipped because they do not exist in Entre Client.")
             elif status == "previously_terminated":
                 logging.info(f"ALREADY TERMINATED: {emp_name} - Was previously terminated.")
             elif status == "terminated_today":
@@ -147,6 +183,12 @@ def main():
     except Exception as e:
         print(f"An error occurred: {e}")
         logging.error(f"Script failed with error: {e}")
+        
+    finally:
+        # 4. Close the application (runs even if the script crashes midway!)
+        close_entre()
 
 if __name__ == "__main__":
+    print("Starting bot in 3 seconds...")
+    time.sleep(3)
     main()
