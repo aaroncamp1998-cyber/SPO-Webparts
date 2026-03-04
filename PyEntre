@@ -1,0 +1,152 @@
+import pandas as pd
+from pywinauto.application import Application
+from pywinauto.keyboard import send_keys
+import time
+import logging
+import os
+from datetime import datetime
+
+# ==========================================
+# 1. Configuration & Setup
+# ==========================================
+
+EXCEL_FILE_PATH = r"C:\path\to\your\employee_data.xlsx"
+APP_PATH = r"C:\Path\To\EntreClient.exe" # Put the exact path to the application here
+PASSWORD = "YourSecurePassword123!"
+
+# Setup Logging
+log_dir = r"c:\logs"
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+log_file = os.path.join(log_dir, "Termination Log.txt")
+logging.basicConfig(
+    filename=log_file, 
+    level=logging.INFO,
+    format='%(asctime)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# ==========================================
+# 2. GUI Automation with pywinauto
+# ==========================================
+# NOTE: The window titles (e.g., 'LoginWindow') and control identifiers 
+# (e.g., 'PasswordEdit') are PLACEHOLDERS. You must replace these with 
+# your app's actual identifiers.
+
+def login_to_entre(app, password):
+    """Handles the initial login and server setup."""
+    print("Logging into Entre Client...")
+    login_dialog = app.window(title_re=".*Login.*") # Adjust title as needed
+    
+    # Input password
+    login_dialog.PasswordEdit.type_keys(password) # Replace 'PasswordEdit'
+    
+    # Change server name
+    login_dialog.ServerEdit.set_edit_text('vsentre01') # Replace 'ServerEdit'
+    
+    # Check Administrators box
+    if not login_dialog.AdminCheckBox.get_toggle_state():
+        login_dialog.AdminCheckBox.click()
+        
+    # Click OK/Login
+    login_dialog.OKButton.click()
+    time.sleep(3) # Wait for login to process and main window to load
+
+def navigate_to_personnel(app):
+    """Navigates the top menus to get to the personnel search."""
+    main_window = app.window(title_re=".*Entre Client.*") # Main window title
+    
+    # Select Management -> Personnel from the top menu bar
+    # pywinauto makes menu navigation very easy:
+    main_window.menu_select("Management->Personnel")
+    time.sleep(1)
+
+def process_employee(app, employee_name):
+    """Searches for an employee, reads their status, and updates if active."""
+    personnel_window = app.window(title="Personnel") # Adjust title
+    
+    # Put employee name into search bar and search
+    personnel_window.SearchEdit.set_edit_text(employee_name)
+    personnel_window.SearchButton.click()
+    time.sleep(2) # Wait for results
+    
+    # Read the status directly from the UI!
+    # This assumes the status shows up in a list, grid, or text box
+    try:
+        current_status = personnel_window.StatusField.window_text() # Replace 'StatusField'
+    except Exception:
+        return "not_found"
+
+    if "Terminated" in current_status:
+        return "previously_terminated"
+    
+    elif "Active" in current_status:
+        # Open the user profile (e.g., double-clicking the result)
+        personnel_window.SearchResultList.click_input(double=True)
+        time.sleep(1)
+        
+        profile_window = app.window(title="User Profile")
+        
+        # Change status from active to terminated
+        profile_window.StatusComboBox.select("Terminated")
+        
+        # Save and Exit
+        profile_window.OKButton.click()
+        profile_window.SaveButton.click()
+        profile_window.ExitButton.click()
+        time.sleep(1)
+        
+        return "terminated_today"
+    else:
+        return "unknown_error"
+
+# ==========================================
+# 3. Main Execution Logic
+# ==========================================
+
+def main():
+    try:
+        # Read Excel data
+        df = pd.read_excel(EXCEL_FILE_PATH)
+        df['Termination Date'] = pd.to_datetime(df['Termination Date'])
+        today = datetime.today()
+        
+        # Start the Application (uses "uia" backend for modern Windows apps)
+        print("Starting Entre Client...")
+        app = Application(backend="uia").start(APP_PATH)
+        time.sleep(2) # Give it a moment to open
+        
+        # Execute workflow
+        login_to_entre(app, PASSWORD)
+        navigate_to_personnel(app)
+        
+        for index, row in df.iterrows():
+            emp_name = row['Employee Name']
+            term_date = row['Termination Date']
+            
+            # Date validation
+            if pd.isna(term_date) or term_date > today:
+                logging.info(f"SKIPPED: {emp_name} - Not at termination date yet.")
+                continue
+            
+            # Process and Log
+            status = process_employee(app, emp_name)
+            
+            if status == "not_found":
+                logging.info(f"NOT FOUND: {emp_name} - Skipped because they do not exist.")
+            elif status == "previously_terminated":
+                logging.info(f"ALREADY TERMINATED: {emp_name} - Was previously terminated.")
+            elif status == "terminated_today":
+                logging.info(f"SUCCESS: {emp_name} - Terminated today.")
+            else:
+                logging.warning(f"ERROR: {emp_name} - Could not determine status.")
+
+        print(f"Process complete. Logs saved to {log_file}")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        logging.error(f"Script failed with error: {e}")
+
+if __name__ == "__main__":
+    main()
